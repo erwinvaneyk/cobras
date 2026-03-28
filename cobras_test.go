@@ -1,75 +1,156 @@
 package cobras
 
 import (
+	"context"
+	"errors"
 	"os"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
-func TestDefaultConfig(t *testing.T) {
-	cfg := defaultConfig()
-	if len(cfg.signals) != 1 {
-		t.Fatalf("expected 1 default signal, got %d", len(cfg.signals))
+type fakeOpts struct {
+	completeCalled bool
+	validateCalled bool
+	runCalled      bool
+	completeErr    error
+	validateErr    error
+	runErr         error
+}
+
+func (f *fakeOpts) Complete(cmd *cobra.Command, args []string) error {
+	f.completeCalled = true
+	return f.completeErr
+}
+
+func (f *fakeOpts) Validate() error {
+	f.validateCalled = true
+	return f.validateErr
+}
+
+func (f *fakeOpts) Run(ctx context.Context) error {
+	f.runCalled = true
+	return f.runErr
+}
+
+func TestRun(t *testing.T) {
+	opts := &fakeOpts{}
+	cmd := &cobra.Command{
+		Run: Run(opts),
 	}
-	if cfg.signals[0] != os.Interrupt {
-		t.Fatalf("expected os.Interrupt, got %v", cfg.signals[0])
+
+	if err := ExecuteE(cmd); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !opts.completeCalled {
+		t.Fatal("expected Complete to be called")
+	}
+	if !opts.validateCalled {
+		t.Fatal("expected Validate to be called")
+	}
+	if !opts.runCalled {
+		t.Fatal("expected Run to be called")
 	}
 }
 
-func TestWithSignals(t *testing.T) {
-	cfg := applyOptions([]RunOption{WithSignals(syscall.SIGTERM, syscall.SIGHUP)})
-	if len(cfg.signals) != 2 {
-		t.Fatalf("expected 2 signals, got %d", len(cfg.signals))
+func TestRunE(t *testing.T) {
+	opts := &fakeOpts{}
+	cmd := &cobra.Command{
+		RunE: RunE(opts),
 	}
-	if cfg.signals[0] != syscall.SIGTERM || cfg.signals[1] != syscall.SIGHUP {
-		t.Fatalf("unexpected signals: %v", cfg.signals)
+
+	if err := ExecuteE(cmd); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-}
 
-func TestWithSignalsEmpty(t *testing.T) {
-	cfg := applyOptions([]RunOption{WithSignals()})
-	if len(cfg.signals) != 0 {
-		t.Fatalf("expected 0 signals, got %d", len(cfg.signals))
+	if !opts.completeCalled {
+		t.Fatal("expected Complete to be called")
 	}
-}
-
-func TestContextDefaultCancelsOnInterrupt(t *testing.T) {
-	ctx, cancel := Context()
-	defer cancel()
-
-	// Send ourselves SIGINT
-	p, _ := os.FindProcess(os.Getpid())
-	p.Signal(os.Interrupt)
-
-	select {
-	case <-ctx.Done():
-		// expected
-	case <-time.After(time.Second):
-		t.Fatal("context was not cancelled after SIGINT")
+	if !opts.validateCalled {
+		t.Fatal("expected Validate to be called")
+	}
+	if !opts.runCalled {
+		t.Fatal("expected Run to be called")
 	}
 }
 
-func TestContextWithCustomSignal(t *testing.T) {
-	ctx, cancel := Context(syscall.SIGUSR1)
-	defer cancel()
+func TestRunECompleteError(t *testing.T) {
+	opts := &fakeOpts{completeErr: errors.New("complete failed")}
+	cmd := &cobra.Command{
+		RunE:          RunE(opts),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
 
-	p, _ := os.FindProcess(os.Getpid())
-	p.Signal(syscall.SIGUSR1)
-
-	select {
-	case <-ctx.Done():
-		// expected
-	case <-time.After(time.Second):
-		t.Fatal("context was not cancelled after SIGUSR1")
+	if err := ExecuteE(cmd); err == nil {
+		t.Fatal("expected error from Complete")
+	}
+	if opts.validateCalled {
+		t.Fatal("Validate should not be called when Complete fails")
+	}
+	if opts.runCalled {
+		t.Fatal("Run should not be called when Complete fails")
 	}
 }
 
-func TestRunWithNoSignals(t *testing.T) {
-	// WithSignals() on Run disables signal handling
-	cfg := applyOptions([]RunOption{WithSignals()})
-	if len(cfg.signals) != 0 {
-		t.Fatalf("expected 0 signals, got %d", len(cfg.signals))
+func TestRunEValidateError(t *testing.T) {
+	opts := &fakeOpts{validateErr: errors.New("validate failed")}
+	cmd := &cobra.Command{
+		RunE:          RunE(opts),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+
+	if err := ExecuteE(cmd); err == nil {
+		t.Fatal("expected error from Validate")
+	}
+	if opts.runCalled {
+		t.Fatal("Run should not be called when Validate fails")
+	}
+}
+
+func TestRunERunError(t *testing.T) {
+	opts := &fakeOpts{runErr: errors.New("run failed")}
+	cmd := &cobra.Command{
+		RunE:          RunE(opts),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+
+	err := ExecuteE(cmd)
+	if err == nil || err.Error() != "run failed" {
+		t.Fatalf("expected 'run failed', got %v", err)
+	}
+}
+
+func TestExecuteWithCustomSignal(t *testing.T) {
+	var ctxErr error
+	cmd := &cobra.Command{
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(syscall.SIGUSR1)
+
+			select {
+			case <-cmd.Context().Done():
+				ctxErr = cmd.Context().Err()
+			case <-time.After(time.Second):
+				t.Fatal("context was not cancelled after SIGUSR1")
+			}
+			return nil
+		},
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+
+	if err := ExecuteE(cmd, WithSignals(syscall.SIGUSR1)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ctxErr == nil {
+		t.Fatal("expected context to be cancelled")
 	}
 }
 
