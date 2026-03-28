@@ -1,7 +1,6 @@
 package cobras
 
 import (
-	"context"
 	"os"
 	"syscall"
 	"testing"
@@ -52,7 +51,7 @@ func TestContextDefaultCancelsOnInterrupt(t *testing.T) {
 }
 
 func TestContextWithCustomSignal(t *testing.T) {
-	ctx, cancel := Context(WithSignals(syscall.SIGUSR1))
+	ctx, cancel := Context(syscall.SIGUSR1)
 	defer cancel()
 
 	p, _ := os.FindProcess(os.Getpid())
@@ -66,17 +65,11 @@ func TestContextWithCustomSignal(t *testing.T) {
 	}
 }
 
-func TestContextWithNoSignals(t *testing.T) {
-	ctx, cancel := Context(WithSignals())
-	defer cancel()
-
-	if ctx.Err() != nil {
-		t.Fatal("context should not be cancelled yet")
-	}
-
-	cancel()
-	if ctx.Err() != context.Canceled {
-		t.Fatal("context should be cancelled after cancel()")
+func TestRunWithNoSignals(t *testing.T) {
+	// WithSignals() on Run disables signal handling
+	cfg := applyOptions([]RunOption{WithSignals()})
+	if len(cfg.signals) != 0 {
+		t.Fatalf("expected 0 signals, got %d", len(cfg.signals))
 	}
 }
 

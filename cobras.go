@@ -70,14 +70,13 @@ func Run(opts Options, options ...RunOption) func(cmd *cobra.Command, args []str
 	}
 }
 
-func Context(options ...RunOption) (ctx context.Context, cancel func()) {
-	cfg := applyOptions(options)
-	ctx, origCancel := context.WithCancel(context.Background())
-	if len(cfg.signals) == 0 {
-		return ctx, origCancel
+func Context(signals ...os.Signal) (ctx context.Context, cancel func()) {
+	if len(signals) == 0 {
+		signals = defaultConfig().signals
 	}
+	ctx, origCancel := context.WithCancel(context.Background())
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, cfg.signals...)
+	signal.Notify(c, signals...)
 	go func() {
 		select {
 		case <-c:
@@ -92,7 +91,8 @@ func Context(options ...RunOption) (ctx context.Context, cancel func()) {
 }
 
 func Execute(cmd *cobra.Command, options ...RunOption) {
-	ctx, cancel := Context(options...)
+	cfg := applyOptions(options)
+	ctx, cancel := Context(cfg.signals...)
 	defer cancel()
 	err := cmd.ExecuteContext(ctx)
 	if err != nil {
