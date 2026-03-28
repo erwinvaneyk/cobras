@@ -1,4 +1,4 @@
-module github.com/platform9/cobras
+module github.com/erwinvaneyk/cobras
 
 go 1.21
 
