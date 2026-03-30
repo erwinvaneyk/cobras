@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -16,7 +17,7 @@ import (
 //  1. Complete binds command-line flags and positional arguments to the receiver.
 //  2. Validate checks that the bound values form a valid configuration.
 //  3. Run executes the command logic with a context that is canceled on
-//     the configured OS signals (default: SIGINT).
+//     the configured OS signals (default: SIGINT and SIGTERM).
 //
 // Use [Run] or [RunE] to wire an Options implementation into a [cobra.Command].
 type Options interface {
@@ -34,8 +35,7 @@ type config struct {
 
 func defaultConfig() config {
 	return config{
-		// Defaults to SIGINT for backward compatibility
-		signals: []os.Signal{os.Interrupt},
+		signals: []os.Signal{syscall.SIGINT, syscall.SIGTERM},
 	}
 }
 
@@ -98,7 +98,7 @@ func RunE(opts Options) func(cmd *cobra.Command, args []string) error {
 // Context creates a background context that is cancelled when one of the given
 // signals is received.
 //
-// If no signals are provided it defaults to SIGINT for backward compatibility.
+// If no signals are provided it defaults to SIGINT and SIGTERM.
 // The returned cancel function stops signal listening and cancels the context.
 func Context(signals ...os.Signal) (ctx context.Context, cancel func()) {
 	if len(signals) == 0 {
